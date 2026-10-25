@@ -3,145 +3,347 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Racetrack - Editor</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Racetrack V3</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#f3f5f7;font-family:Arial,sans-serif;color:#18212b}
-header{padding:12px;text-align:center;background:#18212b;color:white}
-h2{margin:0;font-size:22px}
-p{margin:6px 0;font-size:13px}
-.controls{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;padding:10px}
-button{border:0;border-radius:9px;padding:11px 14px;background:#dce2e9;font-weight:bold}
-button.active{background:#168a56;color:white}
-#board{display:block;width:100%;max-width:600px;margin:auto;background:white;touch-action:none;border:1px solid #bbb}
-#status{text-align:center;padding:10px;font-size:14px}
+body{margin:0;background:#eef2f5;color:#182332;font-family:Arial,sans-serif}
+header{background:#172638;color:white;text-align:center;padding:12px}
+h1{margin:0;font-size:23px}
+header p{margin:5px 0;font-size:12px}
+.controls{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:9px}
+button{border:0;border-radius:8px;background:#d9e1e9;padding:10px;font-size:13px;font-weight:bold}
+button.active{background:#13865c;color:white}
+#info,#message{text-align:center;padding:5px 10px;font-size:14px}
+#info{font-weight:bold}
+#message{min-height:38px}
+canvas{display:block;width:100%;max-width:600px;margin:auto;background:white;touch-action:none;border:1px solid #b8c2cc}
+footer{text-align:center;padding:10px;font-size:12px;color:#576373}
 </style>
 </head>
 <body>
 <header>
-<h2>🏎️ RACETRACK</h2>
-<p>Disegna la pista e poi prova a guidare!</p>
+<h1>🏎️ RACETRACK V3</h1>
+<p>Disegna, accelera, frena e affronta le curve!</p>
 </header>
+
 <div class="controls">
-<button onclick="mode='draw';update()" id="draw">✏️ Disegna</button>
-<button onclick="mode='erase';update()" id="erase">🧽 Cancella</button>
-<button onclick="mode='start';update()" id="start">🚩 Partenza</button>
-<button onclick="play()" id="play">🏎️ Gioca</button>
-<button onclick="reset()">↺ Reset</button>
+<button id="draw" onclick="setMode('draw')">✏️ Disegna</button>
+<button id="erase" onclick="setMode('erase')">🧽 Cancella</button>
+<button id="start" onclick="setMode('start')">🚩 Partenza</button>
+<button id="play" onclick="begin()">🏎️ Gioca</button>
+<button onclick="undo()">↶ Annulla</button>
+<button onclick="clearTrack()">🗑️ Pista</button>
 </div>
+
+<div id="info">Velocità: 0 | Mosse: 0</div>
 <canvas id="board"></canvas>
-<div id="status">Disegna le caselle della pista con il dito.</div>
+<div id="message"></div>
+<footer>In modalità Gioca, trascina dal pallino rosso al punto desiderato.</footer>
+
 <script>
-const c=document.getElementById("board");
-const ctx=c.getContext("2d");
-const cols=20,rows=28;
-let cell=20;
+const canvas=document.getElementById("board");
+const ctx=canvas.getContext("2d");
+const C=20,R=28;
+let unit=20;
 let mode="draw";
 let road=new Set();
 let start={x:10,y:24};
 let car={...start};
-let moves=0;
-let touching=false;
-let last="";
-function key(x,y){return x+","+y}
+let speed=0,moves=0;
+let history=[];
+let drawing=false;
+let preview=null;
+let lastCell=null;
+const k=(x,y)=>x+","+y;
+const inside=(x,y)=>x>=0&&x<C&&y>=0&&y<R;
+
+function message(t){
+document.getElementById("message").textContent=t;
+}
+function save(){
+try{
+localStorage.setItem("racetrack-v3",JSON.stringify({
+road:[...road],start
+}));
+}catch(e){}
+}
+function load(){
+try{
+const s=JSON.parse(localStorage.getItem("racetrack-v3"));
+if(s&&Array.isArray(s.road)){
+road=new Set(s.road);
+start=s.start||start;
+car={...start};
+return true;
+}
+}catch(e){}
+return false;
+}
+function example(){
+for(let y=2;y<R-2;y++){
+for(let x=2;x<C-2;x++){
+if(x<6||x>13||y<6||y>21)road.add(k(x,y));
+}
+}
+}
 function resize(){
 let w=Math.min(window.innerWidth,600);
-cell=w/cols;
-c.width=w;
-c.height=rows*cell;
+unit=w/C;
+canvas.width=w;
+canvas.height=R*unit;
 render();
 }
-function update(){
-document.querySelectorAll("button").forEach(b=>b.classList.remove("active"));
-let b=document.getElementById(mode);
+function setMode(m){
+mode=m;
+preview=null;
+document.querySelectorAll(".controls button").forEach(b=>b.classList.remove("active"));
+const b=document.getElementById(m);
 if(b)b.classList.add("active");
-document.getElementById("status").textContent=
-mode==="play"?"Mosse: "+moves+" — Tocca una casella vicina della pista":
-mode==="start"?"Tocca una casella della pista per fissare la partenza":
-mode==="erase"?"Passa il dito sulle caselle da cancellare":
-"Disegna la pista passando il dito sulle caselle";
+const texts={
+draw:"Passa il dito sulle caselle per disegnare la pista.",
+erase:"Passa il dito sulle caselle da cancellare.",
+start:"Tocca un incrocio della griglia sulla pista.",
+play:"Trascina dal pallino rosso verso il prossimo punto."
+};
+message(texts[m]);
 render();
 }
-function render(){
-ctx.clearRect(0,0,c.width,c.height);
-ctx.fillStyle="#fff";
-ctx.fillRect(0,0,c.width,c.height);
-for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
-if(road.has(key(x,y))){
-ctx.fillStyle="#b5bec7";
-ctx.fillRect(x*cell,y*cell,cell,cell);
-}
-ctx.strokeStyle="#dfe4e9";
-ctx.lineWidth=.6;
-ctx.strokeRect(x*cell,y*cell,cell,cell);
-}
-ctx.fillStyle="#28a45b";
-ctx.fillRect(start.x*cell,start.y*cell,cell,cell);
-ctx.fillStyle="#e33131";
+function drawGrid(){
+ctx.fillStyle="white";
+ctx.fillRect(0,0,canvas.width,canvas.height);
+road.forEach(s=>{
+const [x,y]=s.split(",").map(Number);
+ctx.fillStyle="#bac3cd";
+ctx.fillRect(x*unit,y*unit,unit,unit);
+});
+ctx.strokeStyle="#dce3e9";
+ctx.lineWidth=.7;
+for(let x=0;x<=C;x++){
 ctx.beginPath();
-ctx.arc((car.x+.5)*cell,(car.y+.5)*cell,cell*.35,0,Math.PI*2);
+ctx.moveTo(x*unit,0);
+ctx.lineTo(x*unit,R*unit);
+ctx.stroke();
+}
+for(let y=0;y<=R;y++){
+ctx.beginPath();
+ctx.moveTo(0,y*unit);
+ctx.lineTo(C*unit,y*unit);
+ctx.stroke();
+}
+}
+function dot(p,color,r){
+ctx.fillStyle=color;
+ctx.beginPath();
+ctx.arc(p.x*unit,p.y*unit,r,0,Math.PI*2);
 ctx.fill();
 }
-function position(e){
-const r=c.getBoundingClientRect();
+function render(){
+drawGrid();
+ctx.strokeStyle="#1b925d";
+ctx.lineWidth=4;
+ctx.beginPath();
+ctx.arc(start.x*unit,start.y*unit,unit*.46,0,Math.PI*2);
+ctx.stroke();
+if(history.length){
+ctx.strokeStyle="#245eb9";
+ctx.lineWidth=2.5;
+ctx.beginPath();
+ctx.moveTo(start.x*unit,start.y*unit);
+history.forEach(h=>ctx.lineTo(h.to.x*unit,h.to.y*unit));
+ctx.stroke();
+}
+if(preview){
+ctx.strokeStyle=preview.ok?"#13865c":"#e34c4c";
+ctx.lineWidth=3;
+ctx.setLineDash([6,4]);
+ctx.beginPath();
+ctx.moveTo(car.x*unit,car.y*unit);
+ctx.lineTo(preview.p.x*unit,preview.p.y*unit);
+ctx.stroke();
+ctx.setLineDash([]);
+dot(preview.p,preview.ok?"#13865c":"#e34c4c",unit*.17);
+}
+dot(car,"#e33232",unit*.34);
+document.getElementById("info").textContent=
+"Velocità: "+speed+" | Mosse: "+moves;
+}
+function point(e){
+const r=canvas.getBoundingClientRect();
 return {
-x:Math.floor((e.clientX-r.left)/r.width*cols),
-y:Math.floor((e.clientY-r.top)/r.height*rows)
+x:(e.clientX-r.left)*C/r.width,
+y:(e.clientY-r.top)*R/r.height
 };
 }
-function apply(e){
-let p=position(e),x=p.x,y=p.y;
-if(x<0||x>=cols||y<0||y>=rows)return;
-let k=key(x,y);
-if(mode==="draw")road.add(k);
-if(mode==="erase"&&k!==key(start.x,start.y))road.delete(k);
-if(mode==="start"&&road.has(k)){
-start={x,y};car={x,y};
+function snap(p){
+return {
+x:Math.max(0,Math.min(C,Math.round(p.x))),
+y:Math.max(0,Math.min(R,Math.round(p.y)))
+};
 }
-if(mode==="play"&&e.type==="pointerdown"){
-let dx=Math.abs(x-car.x),dy=Math.abs(y-car.y);
-if(dx<=1&&dy<=1&&(dx+dy)>0&&road.has(k)){
-car={x,y};moves++;
-}else{
-document.getElementById("status").textContent="Mossa non valida: scegli una casella vicina della pista.";
-render();return;
+function roadAt(x,y){
+return inside(x,y)&&road.has(k(x,y));
+}
+function vertexOnRoad(p){
+return roadAt(p.x,p.y)||
+roadAt(p.x-1,p.y)||
+roadAt(p.x,p.y-1)||
+roadAt(p.x-1,p.y-1);
+}
+function segmentOnRoad(a,b){
+const dx=b.x-a.x,dy=b.y-a.y;
+const n=Math.max(1,Math.ceil(Math.hypot(dx,dy)*30));
+for(let i=1;i<n;i++){
+const t=i/n;
+const x=a.x+dx*t,y=a.y+dy*t;
+if(!roadAt(Math.floor(x),Math.floor(y)))return false;
+}
+return vertexOnRoad(b);
+}
+function check(p){
+const d=Math.hypot(p.x-car.x,p.y-car.y);
+const next=Math.round(d);
+if(d<.5)return {ok:false,reason:"Scegli un punto diverso."};
+if(d>5.49||next<1||next>5)
+return {ok:false,reason:"La lunghezza massima è 5 quadretti."};
+if(Math.abs(next-speed)>1)
+return {ok:false,reason:"Puoi cambiare velocità di massimo 1."};
+if(!segmentOnRoad(car,p))
+return {ok:false,reason:"Incidente! Il segmento esce dalla pista."};
+return {ok:true,next};
+}
+function begin(){
+if(!vertexOnRoad(start)){
+message("Scegli prima una partenza sulla pista.");
+return;
+}
+car={...start};
+speed=0;
+moves=0;
+history=[];
+setMode("play");
+}
+function undo(){
+if(mode!=="play"||!history.length){
+message("Non ci sono mosse da annullare.");
+return;
+}
+const h=history.pop();
+car={...h.from};
+speed=h.speed;
+moves--;
+preview=null;
+message("Ultima mossa annullata.");
+render();
+}
+function clearTrack(){
+if(!confirm("Vuoi cancellare tutta la pista?"))return;
+road.clear();
+start={x:10,y:24};
+car={...start};
+history=[];
+speed=0;
+moves=0;
+preview=null;
+save();
+setMode("draw");
+}
+function paint(p){
+const x=Math.floor(p.x),y=Math.floor(p.y);
+if(!inside(x,y))return;
+const s=k(x,y);
+if(s===lastCell)return;
+lastCell=s;
+if(mode==="draw")road.add(s);
+if(mode==="erase")road.delete(s);
+save();
+render();
+}
+function paintLine(a,b){
+const n=Math.max(1,Math.ceil(Math.hypot(b.x-a.x,b.y-a.y)*4));
+for(let i=0;i<=n;i++){
+const t=i/n;
+paint({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
 }
 }
-last=k;
-update();
+let previous=null;
+canvas.addEventListener("pointerdown",e=>{
+e.preventDefault();
+const p=point(e);
+drawing=true;
+previous=p;
+lastCell=null;
+try{canvas.setPointerCapture(e.pointerId)}catch(err){}
+if(mode==="draw"||mode==="erase"){
+paint(p);
+}else if(mode==="start"){
+const s=snap(p);
+if(vertexOnRoad(s)){
+start=s;
+car={...s};
+speed=0;
+moves=0;
+history=[];
+save();
+message("Partenza impostata!");
+render();
+}else message("Scegli un punto sulla pista.");
+}else if(mode==="play"){
+preview=null;
+render();
 }
-c.addEventListener("pointerdown",e=>{
-touching=true;last="";
-try{c.setPointerCapture(e.pointerId)}catch(err){}
-apply(e);
 });
-c.addEventListener("pointermove",e=>{
-if(touching&&(mode==="draw"||mode==="erase")){
-let p=position(e),k=key(p.x,p.y);
-if(k!==last)apply(e);
+canvas.addEventListener("pointermove",e=>{
+if(!drawing)return;
+e.preventDefault();
+const p=point(e);
+if(mode==="draw"||mode==="erase"){
+paintLine(previous,p);
+previous=p;
+}else if(mode==="play"){
+const s=snap(p);
+const test=check(s);
+preview={p:s,ok:test.ok};
+render();
 }
 });
-c.addEventListener("pointerup",()=>touching=false);
-c.addEventListener("pointercancel",()=>touching=false);
-function play(){
-if(!road.has(key(start.x,start.y))){
-road.add(key(start.x,start.y));
+canvas.addEventListener("pointerup",e=>{
+if(!drawing)return;
+drawing=false;
+const p=point(e);
+if(mode==="draw"||mode==="erase"){
+paintLine(previous,p);
+return;
 }
-car={...start};moves=0;mode="play";update();
+if(mode!=="play")return;
+const s=snap(p);
+preview=null;
+const test=check(s);
+if(!test.ok){
+message(test.reason);
+render();
+return;
 }
-function reset(){
-if(!confirm("Cancellare tutta la pista?"))return;
-road.clear();mode="draw";moves=0;render();update();
-}
-for(let y=2;y<26;y++){
-for(let x=2;x<18;x++){
-if(x<5||x>14||y<5||y>22)road.add(key(x,y));
-}
-}
-road.add(key(start.x,start.y));
+history.push({
+from:{...car},
+to:{...s},
+speed
+});
+car=s;
+speed=test.next;
+moves++;
+message("Mossa valida! Velocità "+speed+".");
+render();
+});
+canvas.addEventListener("pointercancel",()=>{
+drawing=false;
+preview=null;
+render();
+});
+if(!load())example();
 window.addEventListener("resize",resize);
-resize();update();
+resize();
+setMode("draw");
 </script>
 </body>
 </html>
