@@ -1,0 +1,147 @@
+
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Racetrack - Editor</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f3f5f7;font-family:Arial,sans-serif;color:#18212b}
+header{padding:12px;text-align:center;background:#18212b;color:white}
+h2{margin:0;font-size:22px}
+p{margin:6px 0;font-size:13px}
+.controls{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;padding:10px}
+button{border:0;border-radius:9px;padding:11px 14px;background:#dce2e9;font-weight:bold}
+button.active{background:#168a56;color:white}
+#board{display:block;width:100%;max-width:600px;margin:auto;background:white;touch-action:none;border:1px solid #bbb}
+#status{text-align:center;padding:10px;font-size:14px}
+</style>
+</head>
+<body>
+<header>
+<h2>🏎️ RACETRACK</h2>
+<p>Disegna la pista e poi prova a guidare!</p>
+</header>
+<div class="controls">
+<button onclick="mode='draw';update()" id="draw">✏️ Disegna</button>
+<button onclick="mode='erase';update()" id="erase">🧽 Cancella</button>
+<button onclick="mode='start';update()" id="start">🚩 Partenza</button>
+<button onclick="play()" id="play">🏎️ Gioca</button>
+<button onclick="reset()">↺ Reset</button>
+</div>
+<canvas id="board"></canvas>
+<div id="status">Disegna le caselle della pista con il dito.</div>
+<script>
+const c=document.getElementById("board");
+const ctx=c.getContext("2d");
+const cols=20,rows=28;
+let cell=20;
+let mode="draw";
+let road=new Set();
+let start={x:10,y:24};
+let car={...start};
+let moves=0;
+let touching=false;
+let last="";
+function key(x,y){return x+","+y}
+function resize(){
+let w=Math.min(window.innerWidth,600);
+cell=w/cols;
+c.width=w;
+c.height=rows*cell;
+render();
+}
+function update(){
+document.querySelectorAll("button").forEach(b=>b.classList.remove("active"));
+let b=document.getElementById(mode);
+if(b)b.classList.add("active");
+document.getElementById("status").textContent=
+mode==="play"?"Mosse: "+moves+" — Tocca una casella vicina della pista":
+mode==="start"?"Tocca una casella della pista per fissare la partenza":
+mode==="erase"?"Passa il dito sulle caselle da cancellare":
+"Disegna la pista passando il dito sulle caselle";
+render();
+}
+function render(){
+ctx.clearRect(0,0,c.width,c.height);
+ctx.fillStyle="#fff";
+ctx.fillRect(0,0,c.width,c.height);
+for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+if(road.has(key(x,y))){
+ctx.fillStyle="#b5bec7";
+ctx.fillRect(x*cell,y*cell,cell,cell);
+}
+ctx.strokeStyle="#dfe4e9";
+ctx.lineWidth=.6;
+ctx.strokeRect(x*cell,y*cell,cell,cell);
+}
+ctx.fillStyle="#28a45b";
+ctx.fillRect(start.x*cell,start.y*cell,cell,cell);
+ctx.fillStyle="#e33131";
+ctx.beginPath();
+ctx.arc((car.x+.5)*cell,(car.y+.5)*cell,cell*.35,0,Math.PI*2);
+ctx.fill();
+}
+function position(e){
+const r=c.getBoundingClientRect();
+return {
+x:Math.floor((e.clientX-r.left)/r.width*cols),
+y:Math.floor((e.clientY-r.top)/r.height*rows)
+};
+}
+function apply(e){
+let p=position(e),x=p.x,y=p.y;
+if(x<0||x>=cols||y<0||y>=rows)return;
+let k=key(x,y);
+if(mode==="draw")road.add(k);
+if(mode==="erase"&&k!==key(start.x,start.y))road.delete(k);
+if(mode==="start"&&road.has(k)){
+start={x,y};car={x,y};
+}
+if(mode==="play"&&e.type==="pointerdown"){
+let dx=Math.abs(x-car.x),dy=Math.abs(y-car.y);
+if(dx<=1&&dy<=1&&(dx+dy)>0&&road.has(k)){
+car={x,y};moves++;
+}else{
+document.getElementById("status").textContent="Mossa non valida: scegli una casella vicina della pista.";
+render();return;
+}
+}
+last=k;
+update();
+}
+c.addEventListener("pointerdown",e=>{
+touching=true;last="";
+try{c.setPointerCapture(e.pointerId)}catch(err){}
+apply(e);
+});
+c.addEventListener("pointermove",e=>{
+if(touching&&(mode==="draw"||mode==="erase")){
+let p=position(e),k=key(p.x,p.y);
+if(k!==last)apply(e);
+}
+});
+c.addEventListener("pointerup",()=>touching=false);
+c.addEventListener("pointercancel",()=>touching=false);
+function play(){
+if(!road.has(key(start.x,start.y))){
+road.add(key(start.x,start.y));
+}
+car={...start};moves=0;mode="play";update();
+}
+function reset(){
+if(!confirm("Cancellare tutta la pista?"))return;
+road.clear();mode="draw";moves=0;render();update();
+}
+for(let y=2;y<26;y++){
+for(let x=2;x<18;x++){
+if(x<5||x>14||y<5||y>22)road.add(key(x,y));
+}
+}
+road.add(key(start.x,start.y));
+window.addEventListener("resize",resize);
+resize();update();
+</script>
+</body>
+</html>
